@@ -1,0 +1,16 @@
+[project]
+name = "ocr-plate"
+version = "1.0.0"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "opencv-python",
+    "numpy",
+    "torch",
+    "torchvision",
+    "Pillow",
+    "ultralytics",
+    "transformers",
+]
