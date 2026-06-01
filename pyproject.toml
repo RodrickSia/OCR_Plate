@@ -13,4 +13,6 @@ dependencies = [
     "Pillow",
     "ultralytics",
     "transformers",
+    "einops",
+    "timm",
 ]

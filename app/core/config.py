@@ -4,7 +4,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 YOLO_MODEL_PATH = str(BASE_DIR / "models" / "license-plate.pt")
-VINTERN_MODEL_NAME = "5CD-AI/Vintern-1B-v3_5"
+VINTERN_MODEL_NAME = "whonoac/License_Plate_Recognition"
 
 YOLO_CONFIDENCE = 0.5
 YOLO_IMGSZ = 640
