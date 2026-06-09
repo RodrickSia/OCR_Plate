@@ -23,13 +23,17 @@ from app.core.config import (
 class PlateDetector:
 
     def __init__(self) -> None:
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
         self.yolo = YOLO(YOLO_MODEL_PATH)
 
         self.vintern = AutoModel.from_pretrained(
             VINTERN_MODEL_NAME,
-            torch_dtype=torch.float16,
+            torch_dtype=self.dtype,
+            low_cpu_mem_usage=True,
             trust_remote_code=True,
-        ).eval().cuda()
+        ).eval().to(self.device)
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             VINTERN_MODEL_NAME,
@@ -62,7 +66,7 @@ class PlateDetector:
     def _recognize_plate_sync(self, plate_img: np.ndarray) -> str:
         try:
             plate_img = cv2.resize(plate_img, (448, 448))
-            pixel_values = self._prepare_image(plate_img).to(torch.float16).cuda()
+            pixel_values = self._prepare_image(plate_img).to(self.dtype).to(self.device)
 
             generation_config = dict(
                 max_new_tokens=OCR_MAX_NEW_TOKENS,
