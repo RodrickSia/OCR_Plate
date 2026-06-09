@@ -12,7 +12,7 @@ dependencies = [
     "torchvision",
     "Pillow",
     "ultralytics",
-    "transformers",
+    "transformers==4.44.2",
     "accelerate",
     "einops",
     "timm",

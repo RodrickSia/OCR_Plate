@@ -19,6 +19,26 @@ from app.core.config import (
     OCR_PROMPT,
 )
 
+# ── Workaround for Vintern config bug ──────────────────────────
+# The model's configuration_internvl_chat.py crashes when __init__
+# is called with no args (llm_config={}) because it accesses
+# llm_config['architectures'] without a guard.  This happens when
+# transformers' to_diff_dict() creates a default config instance
+# and then __repr__ is called during logger.info in from_dict().
+# Patching the configuration_utils logger to swallow that KeyError.
+import transformers.configuration_utils as _cfg_utils
+
+_orig_info = _cfg_utils.logger.info
+
+def _safe_info(msg, *args, **kwargs):
+    try:
+        _orig_info(msg, *args, **kwargs)
+    except (KeyError, AttributeError):
+        pass
+
+_cfg_utils.logger.info = _safe_info
+# ── End workaround ─────────────────────────────────────────────
+
 
 class PlateDetector:
 
