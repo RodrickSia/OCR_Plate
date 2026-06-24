@@ -1,4 +1,31 @@
 import asyncio
+import sys
+from types import ModuleType
+
+# Mock flash_attn for environments where it's not installed
+# Vintern model's remote code and transformers' Llama modeling
+# import flash_attn but we don't need it on CPU
+import importlib.abc
+
+if "flash_attn" not in sys.modules:
+    _mock = ModuleType("flash_attn")
+    _mock.__all__ = []
+    _mock.__file__ = __file__
+    _mock.__package__ = "flash_attn"
+    _mock.__path__ = []
+    _mock.__spec__ = importlib.machinery.ModuleSpec(
+        name="flash_attn",
+        loader=None,
+        origin="mock",
+    )
+    # Sub-modules that may be referenced
+    _mock.flash_attn = _mock
+    _mock.flash_attn_interface = ModuleType("flash_attn.flash_attn_interface")
+    _mock.flash_attn_interface.__spec__ = importlib.machinery.ModuleSpec(
+        name="flash_attn.flash_attn_interface", loader=None, origin="mock"
+    )
+    sys.modules["flash_attn"] = _mock
+    sys.modules["flash_attn.flash_attn_interface"] = _mock.flash_attn_interface
 
 import cv2
 import numpy as np
