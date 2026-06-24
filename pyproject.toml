@@ -16,4 +16,5 @@ dependencies = [
     "accelerate",
     "einops",
     "timm",
+    "easyocr",
 ]

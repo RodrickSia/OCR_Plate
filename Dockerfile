@@ -7,7 +7,13 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+
+# Install CPU-only PyTorch first (avoids downloading ~2GB of CUDA packages)
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+    torch torchvision
+
+# Then install the rest of the project + dependencies
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu .
 
 COPY . .
 

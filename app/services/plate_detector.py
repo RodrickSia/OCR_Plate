@@ -1,40 +1,13 @@
 import asyncio
-import sys
-from types import ModuleType
-
-# Mock flash_attn for environments where it's not installed
-# Vintern model's remote code and transformers' Llama modeling
-# import flash_attn but we don't need it on CPU
-import importlib.abc
-
-if "flash_attn" not in sys.modules:
-    _mock = ModuleType("flash_attn")
-    _mock.__all__ = []
-    _mock.__file__ = __file__
-    _mock.__package__ = "flash_attn"
-    _mock.__path__ = []
-    _mock.__spec__ = importlib.machinery.ModuleSpec(
-        name="flash_attn",
-        loader=None,
-        origin="mock",
-    )
-    # Sub-modules that may be referenced
-    _mock.flash_attn = _mock
-    _mock.flash_attn_interface = ModuleType("flash_attn.flash_attn_interface")
-    _mock.flash_attn_interface.__spec__ = importlib.machinery.ModuleSpec(
-        name="flash_attn.flash_attn_interface", loader=None, origin="mock"
-    )
-    sys.modules["flash_attn"] = _mock
-    sys.modules["flash_attn.flash_attn_interface"] = _mock.flash_attn_interface
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
 import torch
-from concurrent.futures import ThreadPoolExecutor
+import torch.nn as nn
 from PIL import Image
 from torchvision import transforms
 from ultralytics import YOLO
-from transformers import AutoModel, AutoTokenizer
 
 from app.core.config import (
     YOLO_MODEL_PATH,
@@ -46,16 +19,12 @@ from app.core.config import (
     OCR_PROMPT,
 )
 
+
 # ── Workaround for Vintern config bug ──────────────────────────
-# The model's configuration_internvl_chat.py crashes when __init__
-# is called with no args (llm_config={}) because it accesses
-# llm_config['architectures'] without a guard.  This happens when
-# transformers' to_diff_dict() creates a default config instance
-# and then __repr__ is called during logger.info in from_dict().
-# Patching the configuration_utils logger to swallow that KeyError.
 import transformers.configuration_utils as _cfg_utils
 
 _orig_info = _cfg_utils.logger.info
+
 
 def _safe_info(msg, *args, **kwargs):
     try:
@@ -63,32 +32,123 @@ def _safe_info(msg, *args, **kwargs):
     except (KeyError, AttributeError):
         pass
 
+
 _cfg_utils.logger.info = _safe_info
 # ── End workaround ─────────────────────────────────────────────
 
 
-class PlateDetector:
+class _VinternEngine(nn.Module):
+    """GPU-preferring OCR engine using Vintern VLM."""
 
-    def __init__(self) -> None:
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+    def __init__(self, device: torch.device, dtype: torch.dtype) -> None:
+        super().__init__()
+        self.device = device
+        self.dtype = dtype
+        from transformers import AutoModel, AutoTokenizer
 
-        self.yolo = YOLO(YOLO_MODEL_PATH)
-
-        self.vintern = AutoModel.from_pretrained(
+        self.model = AutoModel.from_pretrained(
             VINTERN_MODEL_NAME,
-            torch_dtype=self.dtype,
+            torch_dtype=dtype,
             low_cpu_mem_usage=True,
             trust_remote_code=True,
-        ).eval().to(self.device)
-
+        ).eval().to(device)
         self.tokenizer = AutoTokenizer.from_pretrained(
             VINTERN_MODEL_NAME,
             trust_remote_code=True,
             use_fast=False,
         )
 
+    @staticmethod
+    def _build_transform(input_size: int = 448) -> transforms.Compose:
+        return transforms.Compose([
+            transforms.Resize((input_size, input_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
+            ),
+        ])
+
+    def _prepare_image(self, img: np.ndarray) -> torch.Tensor:
+        image = Image.fromarray(img).convert("RGB")
+        transform = self._build_transform()
+        return transform(image).unsqueeze(0)
+
+    def recognize(self, plate_img: np.ndarray) -> str:
+        try:
+            plate_img = cv2.resize(plate_img, (448, 448))
+            pixel_values = self._prepare_image(plate_img).to(self.dtype).to(self.device)
+
+            generation_config = dict(
+                max_new_tokens=OCR_MAX_NEW_TOKENS,
+                do_sample=False,
+                num_beams=OCR_NUM_BEAMS,
+            )
+
+            with torch.no_grad():
+                text = self.model.chat(
+                    self.tokenizer,
+                    pixel_values,
+                    OCR_PROMPT,
+                    generation_config,
+                )
+            result = text.strip()
+            return result
+        except Exception as e:
+            print("Vintern OCR ERROR:", e)
+            return ""
+
+
+class _EasyOCREngine(nn.Module):
+    """CPU-friendly OCR engine using EasyOCR."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        import easyocr
+
+        self.reader = easyocr.Reader(["vi"], gpu=False)
+
+    def recognize(self, plate_img: np.ndarray) -> str:
+        try:
+            result = self.reader.readtext(plate_img)
+            if result:
+                return result[0][1].strip().replace(".", "").replace(" ", "")
+            return ""
+        except Exception as e:
+            print("EasyOCR ERROR:", e)
+            return ""
+
+
+class PlateDetector:
+
+    def __init__(self) -> None:
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.yolo = YOLO(YOLO_MODEL_PATH)
+
+        self.ocr_engine = self._init_ocr_engine()
+
         self._executor = ThreadPoolExecutor(max_workers=1)
+
+    def _init_ocr_engine(self) -> nn.Module:
+        # 1) Try GPU engine (Vintern with flash_attn)
+        if torch.cuda.is_available():
+            try:
+                print("[OCR] Trying Vintern (GPU) ...")
+                dtype = torch.float16
+                return _VinternEngine(self.device, dtype)
+            except (ImportError, RuntimeError) as e:
+                print(f"[OCR] Vintern GPU failed ({e}), falling back ...")
+        else:
+            print("[OCR] No CUDA available, skipping Vintern ...")
+
+        # 2) Fallback: CPU engine (EasyOCR)
+        try:
+            print("[OCR] Loading EasyOCR (CPU) ...")
+            return _EasyOCREngine()
+        except ImportError as e:
+            print(f"[OCR] EasyOCR also unavailable ({e}), using dummy engine")
+            return _DummyEngine()
 
     # ── image pre-processing ──
 
@@ -111,29 +171,7 @@ class PlateDetector:
     # ── OCR (runs in thread pool) ──
 
     def _recognize_plate_sync(self, plate_img: np.ndarray) -> str:
-        try:
-            plate_img = cv2.resize(plate_img, (448, 448))
-            pixel_values = self._prepare_image(plate_img).to(self.dtype).to(self.device)
-
-            generation_config = dict(
-                max_new_tokens=OCR_MAX_NEW_TOKENS,
-                do_sample=False,
-                num_beams=OCR_NUM_BEAMS,
-            )
-
-            with torch.no_grad():
-                text = self.vintern.chat(
-                    self.tokenizer,
-                    pixel_values,
-                    OCR_PROMPT,
-                    generation_config,
-                )
-            result = text.strip()
-            print("OCR:", result)
-            return result
-        except Exception as e:
-            print("OCR ERROR:", e)
-            return ""
+        return self.ocr_engine.recognize(plate_img)
 
     async def _recognize_plate(self, plate_img: np.ndarray) -> str:
         loop = asyncio.get_event_loop()
@@ -157,3 +195,8 @@ class PlateDetector:
                         plates.append(text)
 
         return plates
+
+
+class _DummyEngine(nn.Module):
+    def recognize(self, plate_img: np.ndarray) -> str:
+        return ""
