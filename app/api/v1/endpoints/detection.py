@@ -5,6 +5,8 @@ from fastapi import Request, HTTPException
 from app.schemas.detection import SUPPORTED_CONTENT_TYPES, DetectionResponse
 from app.services.plate_detector import PlateDetector
 
+MAX_BODY_SIZE = 16 * 1024 * 1024  # 16 MB
+
 
 async def detect_image(request: Request):
     content_type = request.headers.get("content-type", "")
@@ -17,6 +19,8 @@ async def detect_image(request: Request):
     detector: PlateDetector = request.app.state.plate_detector
 
     contents = await request.body()
+    if len(contents) > MAX_BODY_SIZE:
+        raise HTTPException(status_code=413, detail="Request body too large")
     nparr = np.frombuffer(contents, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 

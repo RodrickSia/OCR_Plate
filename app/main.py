@@ -12,6 +12,7 @@ async def lifespan(app: FastAPI):
     print("[Lifespan] PlateDetector models loaded")
     yield
     print("[Lifespan] Shutting down")
+    app.state.plate_detector.close()
 
 
 app = FastAPI(title="OCR Plate API", version="1.0.0", lifespan=lifespan)

@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 
 
-SUPPORTED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
+SUPPORTED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "application/octet-stream"}
 
 
 class DetectionResponse(BaseModel):

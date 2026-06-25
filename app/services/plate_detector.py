@@ -119,6 +119,11 @@ class _EasyOCREngine(nn.Module):
             return ""
 
 
+class _DummyEngine(nn.Module):
+    def recognize(self, plate_img: np.ndarray) -> str:
+        return ""
+
+
 class PlateDetector:
 
     def __init__(self) -> None:
@@ -131,7 +136,6 @@ class PlateDetector:
         self._executor = ThreadPoolExecutor(max_workers=1)
 
     def _init_ocr_engine(self) -> nn.Module:
-        # 1) Try GPU engine (Vintern with flash_attn)
         if torch.cuda.is_available():
             try:
                 print("[OCR] Trying Vintern (GPU) ...")
@@ -142,7 +146,6 @@ class PlateDetector:
         else:
             print("[OCR] No CUDA available, skipping Vintern ...")
 
-        # 2) Fallback: CPU engine (EasyOCR)
         try:
             print("[OCR] Loading EasyOCR (CPU) ...")
             return _EasyOCREngine()
@@ -150,23 +153,8 @@ class PlateDetector:
             print(f"[OCR] EasyOCR also unavailable ({e}), using dummy engine")
             return _DummyEngine()
 
-    # ── image pre-processing ──
-
-    @staticmethod
-    def _build_transform(input_size: int = 448) -> transforms.Compose:
-        return transforms.Compose([
-            transforms.Resize((input_size, input_size)),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225],
-            ),
-        ])
-
-    def _prepare_image(self, img: np.ndarray) -> torch.Tensor:
-        image = Image.fromarray(img).convert("RGB")
-        transform = self._build_transform()
-        return transform(image).unsqueeze(0)
+    def close(self):
+        self._executor.shutdown(wait=True)
 
     # ── OCR (runs in thread pool) ──
 
@@ -180,23 +168,23 @@ class PlateDetector:
     # ── public API ──
 
     async def detect_plates(self, image: np.ndarray) -> list[str]:
-        with torch.no_grad():
-            results = self.yolo.predict(image, conf=YOLO_CONFIDENCE, imgsz=YOLO_IMGSZ, verbose=False)
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            self._executor,
+            lambda: self.yolo.predict(image, conf=YOLO_CONFIDENCE, imgsz=YOLO_IMGSZ, verbose=False),
+        )
 
         plates: list[str] = []
+        h, w = image.shape[:2]
         for r in results:
             for box in r.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
+                x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
                 crop = image[y1:y2, x1:x2]
 
-                if crop.size > 0:
+                if crop.shape[0] > 10 and crop.shape[1] > 10:
                     text = await self._recognize_plate(crop)
                     if text:
                         plates.append(text)
 
         return plates
-
-
-class _DummyEngine(nn.Module):
-    def recognize(self, plate_img: np.ndarray) -> str:
-        return ""
