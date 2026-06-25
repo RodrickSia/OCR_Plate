@@ -6,7 +6,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends libgl1 libglib2.0-0 curl && \
     rm -rf /var/lib/apt/lists/*
 
-RUN addgroup --system appgroup && adduser --system --group appuser
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup --home /app appuser
 
 COPY pyproject.toml .
 
@@ -17,6 +17,13 @@ RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/wh
 # Copy source and install the project
 COPY . .
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu .
+
+# Ensure /app is writable by appuser (EasyOCR, matplotlib, HuggingFace caches)
+RUN chown -R appuser:appgroup /app
+
+ENV HOME=/app \
+    MPLCONFIGDIR=/app/.config/matplotlib \
+    TRANSFORMERS_CACHE=/app/.cache/huggingface
 
 USER appuser
 
