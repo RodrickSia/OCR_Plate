@@ -17,4 +17,5 @@ dependencies = [
     "einops",
     "timm",
     "easyocr",
+    "python-multipart",
 ]
