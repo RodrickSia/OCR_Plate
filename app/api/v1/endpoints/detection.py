@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
-from fastapi import Request, HTTPException
+from fastapi import Request, HTTPException, UploadFile, File
+from typing import Optional
 
 from app.schemas.detection import SUPPORTED_CONTENT_TYPES, DetectionResponse
 from app.services.plate_detector import PlateDetector
@@ -8,19 +9,28 @@ from app.services.plate_detector import PlateDetector
 MAX_BODY_SIZE = 16 * 1024 * 1024  # 16 MB
 
 
-async def detect_image(request: Request):
-    content_type = request.headers.get("content-type", "")
-    if content_type not in SUPPORTED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=415,
-            detail=f"Unsupported media type '{content_type}'. Expected one of: {SUPPORTED_CONTENT_TYPES}",
-        )
-
+async def detect_image(
+    request: Request,
+    image: Optional[UploadFile] = File(None),
+    image_bytes: Optional[bytes] = File(None),
+):
     detector: PlateDetector = request.app.state.plate_detector
 
-    contents = await request.body()
+    contents = b""
+
+    if image is not None:
+        contents = await image.read()
+    elif image_bytes is not None:
+        contents = image_bytes
+    else:
+        contents = await request.body()
+
+    if len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Empty image data")
+
     if len(contents) > MAX_BODY_SIZE:
         raise HTTPException(status_code=413, detail="Request body too large")
+
     nparr = np.frombuffer(contents, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 

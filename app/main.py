@@ -9,9 +9,7 @@ from app.api.v1.routes import router as v1_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.plate_detector = PlateDetector()
-    print("[Lifespan] PlateDetector models loaded")
     yield
-    print("[Lifespan] Shutting down")
     app.state.plate_detector.close()
 
 

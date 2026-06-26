@@ -94,8 +94,7 @@ class _VinternEngine(nn.Module):
                 )
             result = text.strip()
             return result
-        except Exception as e:
-            print("Vintern OCR ERROR:", e)
+        except Exception:
             return ""
 
 
@@ -114,8 +113,7 @@ class _EasyOCREngine(nn.Module):
             if result:
                 return result[0][1].strip().replace(".", "").replace(" ", "")
             return ""
-        except Exception as e:
-            print("EasyOCR ERROR:", e)
+        except Exception:
             return ""
 
 
@@ -138,19 +136,14 @@ class PlateDetector:
     def _init_ocr_engine(self) -> nn.Module:
         if torch.cuda.is_available():
             try:
-                print("[OCR] Trying Vintern (GPU) ...")
                 dtype = torch.float16
                 return _VinternEngine(self.device, dtype)
-            except (ImportError, RuntimeError) as e:
-                print(f"[OCR] Vintern GPU failed ({e}), falling back ...")
-        else:
-            print("[OCR] No CUDA available, skipping Vintern ...")
+            except (ImportError, RuntimeError):
+                pass
 
         try:
-            print("[OCR] Loading EasyOCR (CPU) ...")
             return _EasyOCREngine()
-        except ImportError as e:
-            print(f"[OCR] EasyOCR also unavailable ({e}), using dummy engine")
+        except ImportError:
             return _DummyEngine()
 
     def close(self):
